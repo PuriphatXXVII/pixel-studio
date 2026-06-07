@@ -1,0 +1,12 @@
+{
+  "claude-opus-4-8": {
+    "wins": 3,
+    "runs": 3,
+    "totalScore": 24
+  },
+  "claude-haiku-4-5": {
+    "wins": 0,
+    "runs": 3,
+    "totalScore": 23
+  }
+}

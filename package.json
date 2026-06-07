@@ -1,0 +1,17 @@
+{
+  "name": "pixel-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pixel Studio — a multi-model AI agent studio that designs & builds UI components, judged by a vision-based critic loop.",
+  "scripts": {
+    "build": "node build.mjs",
+    "studio": "node studio.mjs",
+    "battle": "node battle.mjs",
+    "gallery": "node gallery.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "playwright": "^1.49.0"
+  }
+}
