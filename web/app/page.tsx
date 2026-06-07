@@ -130,7 +130,7 @@ function Battle() {
 
       {running && results.length === 0 && <p className="text-neutral-500 text-sm mt-6 animate-pulse">🥊 โมเดลกำลังออกแบบแข่งกัน…</p>}
 
-      <div className="mt-10 grid gap-6 md:grid-cols-3">
+      <div className="mt-10 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         {ranked.map((c) => {
           const v = VENDOR[c.vendor] ?? { label: c.vendor, cls: "bg-neutral-700 text-neutral-200" };
           const isWin = winner === c.name;

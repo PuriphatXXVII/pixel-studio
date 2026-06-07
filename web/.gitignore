@@ -34,6 +34,9 @@ yarn-error.log*
 # local dev / verification artifacts
 .playwright-mcp/
 
+# runtime leaderboard state (accumulates locally)
+/data/
+
 # env files (can opt-in for committing if needed)
 .env*
 

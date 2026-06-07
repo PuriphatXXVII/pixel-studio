@@ -4,6 +4,8 @@
 // ไม่มี key → stub (variant ต่างกัน + คะแนน deterministic) เพื่อให้รัน pipeline ได้ keyless
 import Anthropic from "@anthropic-ai/sdk";
 import { chromium } from "playwright";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 const hasAnthropic = () => !!process.env.ANTHROPIC_API_KEY;
 const hasGemini = () => !!process.env.GEMINI_API_KEY;
@@ -27,6 +29,7 @@ export type BattleEvent =
 // 🥊 ผู้เข้าแข่ง — เพิ่ม/สลับโมเดลได้ตรงนี้ (cross-vendor). name = ชื่อโชว์, model = API id
 const CONTESTANTS: Contestant[] = [
   { name: "claude-opus-4-8", model: "claude-opus-4-8", vendor: "anthropic", accent: "rose" },
+  { name: "claude-sonnet-4-6", model: "claude-sonnet-4-6", vendor: "anthropic", accent: "amber" },
   { name: "claude-haiku-4-5", model: "claude-haiku-4-5", vendor: "anthropic", accent: "indigo" },
   { name: "gemini-3.1-pro", model: GEMINI_MODEL, vendor: "google", accent: "emerald" },
 ];
@@ -59,6 +62,8 @@ function stubFor(c: Contestant): string {
     return stub(c.accent, c.name, ["Unlimited projects", "Priority 24/7 support", "Advanced analytics dashboard", "Full REST + webhook API access", "Custom domains & SSO"], "Popular");
   if (c.name.includes("gemini"))
     return stub(c.accent, c.name, ["Unlimited projects", "Priority support", "Analytics dashboard", "API access"]);
+  if (c.name.includes("sonnet"))
+    return stub(c.accent, c.name, ["Unlimited projects", "Priority support", "Analytics dashboard", "Team seats"]);
   return stub(c.accent, c.name, ["Projects", "Email support", "Basic analytics"]);
 }
 
@@ -137,10 +142,21 @@ async function critic(brief: string, html: string): Promise<{ score: number; fee
   return JSON.parse(textOf(res));
 }
 
-// 📊 leaderboard สะสมข้าม request ในเซสชัน (เก็บบน globalThis เพื่อรอด HMR ตอน dev)
+// 📊 leaderboard สะสม — เก็บลงไฟล์เพื่อให้ "อยู่ข้ามการ restart" (metric จริง)
+// + cache บน globalThis เพื่อรอด HMR ตอน dev
 type LbEntry = { vendor: string; wins: number; runs: number; total: number };
+const LB_FILE = join(process.cwd(), "data", "leaderboard.json");
+
+function loadLb(): Record<string, LbEntry> {
+  try { return JSON.parse(readFileSync(LB_FILE, "utf8")); } catch { return {}; }
+}
+function saveLb() {
+  try { mkdirSync(dirname(LB_FILE), { recursive: true }); writeFileSync(LB_FILE, JSON.stringify(LB, null, 2)); }
+  catch (e) { console.error("[battle] save leaderboard failed:", e instanceof Error ? e.message : e); }
+}
+
 const g = globalThis as unknown as { __pixelLb?: Record<string, LbEntry> };
-g.__pixelLb ??= {};
+g.__pixelLb ??= loadLb();
 const LB = g.__pixelLb;
 
 function record(results: BattleResult[], winner: BattleResult) {
@@ -150,6 +166,7 @@ function record(results: BattleResult[], winner: BattleResult) {
     LB[r.name].total += r.score;
   }
   LB[winner.name].wins++;
+  saveLb();
 }
 
 function leaderboard(): LeaderRow[] {
