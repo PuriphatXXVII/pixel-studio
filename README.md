@@ -58,6 +58,16 @@ $env:ANTHROPIC_API_KEY = "sk-ant-..."   # PowerShell
 node battle.mjs "a testimonial card"
 ```
 
+## 🖥️ Web UI (`web/`)
+
+A **Next.js** app that turns the studio into a live demo: type a brief and watch the **build → render → vision-critic → revise** loop stream in round by round (Server-Sent Events), each round showing the real AI-generated component in an iframe with its score and feedback.
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:3000  (set ANTHROPIC_API_KEY for real AI; stub otherwise)
+```
+
 ## 🛠️ Tech
 
 **Node.js (ESM)** · **Playwright** (render to screenshot) · **Anthropic Claude** — builder + **vision** critic, structured JSON outputs · **Tailwind** (CDN). Pluggable model panel (Claude Opus / Haiku today; Gemini-ready).
