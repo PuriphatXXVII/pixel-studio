@@ -60,17 +60,32 @@ node battle.mjs "a testimonial card"
 
 ## 🖥️ Web UI (`web/`)
 
-A **Next.js** app that turns the studio into a live demo: type a brief and watch the **build → render → vision-critic → revise** loop stream in round by round (Server-Sent Events), each round showing the real AI-generated component in an iframe with its score and feedback.
+A **Next.js** app that turns the studio into a live demo. Two tabs, both stream over Server-Sent Events:
+
+- **🎬 Critic loop** — type a brief and watch the **build → render → vision-critic → revise** loop stream in round by round, each round showing the real AI-generated component in an iframe with its score and feedback.
+- **⚔️ Model battle** — **cross-vendor**: **Claude Opus 4.8**, **Claude Haiku 4.5** and **Google Gemini 3.1 Pro** design the *same* brief side-by-side; the vision-critic scores each, crowns a 👑 winner, and a live **leaderboard** tracks win-rate + average score across battles in the session.
+
+🌏 **Bilingual** — write the brief in **Thai or English**; the AI generates the component's visible copy in that same language.
 
 ```bash
 cd web
 npm install
-npm run dev        # http://localhost:3000  (set ANTHROPIC_API_KEY for real AI; stub otherwise)
+npm run dev        # http://localhost:3000
 ```
+
+**Keys are optional** (stub fallback runs the whole pipeline keyless):
+
+```powershell
+$env:ANTHROPIC_API_KEY = "sk-ant-..."   # Claude builder + vision critic
+$env:GEMINI_API_KEY     = "AIza..."     # Gemini contestant in the battle
+$env:GEMINI_MODEL       = "gemini-3.1-pro-preview"   # optional override (this is the default)
+```
+
+> Gemini is called via the REST API directly (no extra SDK). The critic is Claude vision — an honest caveat in a Claude-vs-Gemini battle, noted for transparency.
 
 ## 🛠️ Tech
 
-**Node.js (ESM)** · **Playwright** (render to screenshot) · **Anthropic Claude** — builder + **vision** critic, structured JSON outputs · **Tailwind** (CDN). Pluggable model panel (Claude Opus / Haiku today; Gemini-ready).
+**Node.js (ESM)** · **Next.js** (web UI, SSE) · **Playwright** (render to screenshot) · **Anthropic Claude** — builder + **vision** critic, structured JSON outputs · **Google Gemini** (REST) · **Tailwind** (CDN). Pluggable cross-vendor model panel.
 
 ---
 

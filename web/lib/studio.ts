@@ -32,9 +32,10 @@ async function build(brief: string, opts: { html?: string; feedback?: string; fi
   const revising = !!opts.feedback;
   if (!hasKey()) return { html: fallbackHtml(revising ? "indigo" : "rose"), by: "stub" };
   const client = new Anthropic();
+  const lang = " Write any visible copy in the SAME LANGUAGE as the brief (Thai brief → Thai text in the component).";
   const system = revising
-    ? "You are a senior frontend designer improving an existing UI component from a critic's feedback. Return the FULL improved self-contained HTML (Tailwind via CDN). Raw HTML only."
-    : "You are a senior frontend designer. Output ONE self-contained HTML document for the requested UI component. Load Tailwind via <script src=\"https://cdn.tailwindcss.com\"></script>. Center it on a neutral page with padding. Polished and modern. Raw HTML only, starting with <!doctype html>.";
+    ? "You are a senior frontend designer improving an existing UI component from a critic's feedback. Return the FULL improved self-contained HTML (Tailwind via CDN). Raw HTML only." + lang
+    : "You are a senior frontend designer. Output ONE self-contained HTML document for the requested UI component. Load Tailwind via <script src=\"https://cdn.tailwindcss.com\"></script>. Center it on a neutral page with padding. Polished and modern. Raw HTML only, starting with <!doctype html>." + lang;
   const user = revising
     ? `Brief:\n${brief}\n\nCurrent HTML:\n${opts.html}\n\nCritic (${opts.score}/10):\n${opts.feedback}\nFixes:\n- ${(opts.fixes || []).join("\n- ")}\n\nReturn the improved full HTML.`
     : `Build this UI component:\n${brief}`;
