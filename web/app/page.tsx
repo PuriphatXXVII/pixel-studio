@@ -9,14 +9,40 @@ const VENDOR: Record<string, { label: string; cls: string }> = {
   anthropic: { label: "Anthropic", cls: "bg-orange-500/20 text-orange-300" },
   google: { label: "Google", cls: "bg-sky-500/20 text-sky-300" },
 };
+const EXPECTED_CONTESTANTS = 4; // ใช้โชว์ skeleton ระหว่างรอผล (ดู lib/battle.ts)
+
+function SkeletonCard({ label, h = "h-64" }: { label: string; h?: string }) {
+  return (
+    <div className="bg-neutral-900 rounded-2xl ring-1 ring-white/10 overflow-hidden animate-pulse">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+        <div className="h-3 w-24 bg-white/10 rounded" />
+        <div className="h-5 w-14 bg-white/10 rounded-full" />
+      </div>
+      <div className={`${h} bg-white/[0.03] grid place-items-center`}>
+        <span className="text-xs text-neutral-600">{label}</span>
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        <div className="h-2.5 w-full bg-white/10 rounded" />
+        <div className="h-2.5 w-2/3 bg-white/10 rounded" />
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   const [tab, setTab] = useState<"studio" | "battle">("studio");
   return (
     <main className="min-h-screen bg-neutral-950 text-white font-sans">
       <div className="max-w-5xl mx-auto px-6 py-12">
-        <h1 className="text-4xl md:text-5xl font-black tracking-tight">🎨 Pixel <span className="text-rose-500">Studio</span></h1>
+        <h1 className="text-4xl md:text-5xl font-black tracking-tight">
+          🎨 Pixel <span className="bg-gradient-to-r from-rose-400 via-fuchsia-500 to-violet-500 bg-clip-text text-transparent">Studio</span>
+        </h1>
         <p className="text-neutral-400 mt-2">โมเดล AI หลายตัวช่วยกันออกแบบ UI — แล้ว <b className="text-white">ตัดสินงานจากภาพที่ render จริง</b></p>
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+          {["🤖 multi-model", "👁️ vision critic", "🌏 พิมพ์ไทย/อังกฤษ"].map((t) => (
+            <span key={t} className="px-2.5 py-1 rounded-full bg-white/5 ring-1 ring-white/10 text-neutral-300">{t}</span>
+          ))}
+        </div>
 
         {/* tabs */}
         <div className="mt-7 inline-flex bg-neutral-900 ring-1 ring-white/10 rounded-xl p-1">
@@ -71,11 +97,10 @@ function Studio() {
         </button>
       </div>
 
-      {running && rounds.length === 0 && <p className="text-neutral-500 text-sm mt-6 animate-pulse">🤖 AI กำลังร่างแบบแรก…</p>}
-
       <div className="mt-10 grid gap-6 md:grid-cols-2">
         {rounds.map((r) => (
-          <div key={r.n} className="bg-neutral-900 rounded-2xl ring-1 ring-white/10 overflow-hidden">
+          <div key={r.n} style={{ animationDelay: `${r.n * 80}ms` }}
+            className="animate-in-up bg-neutral-900 rounded-2xl ring-1 ring-white/10 overflow-hidden transition hover:ring-white/25 hover:-translate-y-0.5">
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
               <span className="font-bold text-sm">Round {r.n} <span className="text-neutral-500 font-normal">· {r.by}</span></span>
               <span className={`text-xs font-bold px-3 py-1 rounded-full ${r.pass ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>
@@ -86,6 +111,7 @@ function Studio() {
             <p className="px-4 py-3 text-xs text-neutral-400 leading-relaxed">↳ {r.feedback}</p>
           </div>
         ))}
+        {running && <SkeletonCard label="🤖 AI กำลังออกแบบ/แก้รอบถัดไป…" h="h-72" />}
       </div>
     </>
   );
@@ -114,6 +140,7 @@ function Battle() {
   }
 
   const ranked = [...results].sort((a, b) => b.score - a.score);
+  const pending = running ? Math.max(0, EXPECTED_CONTESTANTS - results.length) : 0;
 
   return (
     <>
@@ -128,14 +155,13 @@ function Battle() {
         </button>
       </div>
 
-      {running && results.length === 0 && <p className="text-neutral-500 text-sm mt-6 animate-pulse">🥊 โมเดลกำลังออกแบบแข่งกัน…</p>}
-
       <div className="mt-10 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-        {ranked.map((c) => {
+        {ranked.map((c, i) => {
           const v = VENDOR[c.vendor] ?? { label: c.vendor, cls: "bg-neutral-700 text-neutral-200" };
           const isWin = winner === c.name;
           return (
-            <div key={c.name} className={`bg-neutral-900 rounded-2xl overflow-hidden ring-1 ${isWin ? "ring-2 ring-amber-400" : "ring-white/10"}`}>
+            <div key={c.name} style={{ animationDelay: `${i * 80}ms` }}
+              className={`animate-in-up bg-neutral-900 rounded-2xl overflow-hidden ring-1 transition hover:-translate-y-0.5 ${isWin ? "ring-2 ring-amber-400 animate-glow" : "ring-white/10 hover:ring-white/25"}`}>
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
                 <span className="font-bold text-sm truncate">{isWin && "👑 "}{c.name}</span>
                 <span className="text-base font-black text-emerald-300">{c.score}<span className="text-xs text-neutral-500 font-normal">/10</span></span>
@@ -148,11 +174,14 @@ function Battle() {
             </div>
           );
         })}
+        {Array.from({ length: pending }).map((_, i) => (
+          <SkeletonCard key={`sk-${i}`} label="🥊 กำลังออกแบบแข่ง…" />
+        ))}
       </div>
 
       {board.length > 0 && (
-        <div className="mt-10 bg-neutral-900 rounded-2xl ring-1 ring-white/10 overflow-hidden">
-          <p className="px-4 py-3 font-bold text-sm border-b border-white/10">📊 Leaderboard <span className="text-neutral-500 font-normal">· สะสมทุกการแข่งในเซสชันนี้</span></p>
+        <div className="mt-10 animate-in-up bg-neutral-900 rounded-2xl ring-1 ring-white/10 overflow-hidden">
+          <p className="px-4 py-3 font-bold text-sm border-b border-white/10">📊 Leaderboard <span className="text-neutral-500 font-normal">· สะสมทุกการแข่ง (เก็บถาวร)</span></p>
           <table className="w-full text-sm">
             <thead className="text-neutral-500 text-xs">
               <tr><th className="text-left px-4 py-2 font-medium">Model</th><th className="px-4 py-2 font-medium">Wins</th><th className="px-4 py-2 font-medium">Win-rate</th><th className="px-4 py-2 font-medium">Avg</th></tr>
