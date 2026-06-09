@@ -1,4 +1,23 @@
 node_modules/
-.env
+.env*
 *.log
+
+# generated CLI outputs (regenerate by running the .mjs scripts — not committed)
 _*.html
+preview.png
+component.html
+evolution.png
+round-*.png
+studio-log.md
+battle.png
+winner.png
+battle-*.png
+battle-*.html
+gallery.html
+gallery-preview.png
+gallery/
+leaderboard.json
+leaderboard.md
+
+# local verification artifacts
+.playwright-mcp/
