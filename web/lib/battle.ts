@@ -86,7 +86,8 @@ async function buildGemini(model: string, brief: string): Promise<string> {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM }] },
       contents: [{ role: "user", parts: [{ text: `Build this UI component:\n${brief}` }] }],
-      generationConfig: { maxOutputTokens: 4000 },
+      // 3.1 Pro เป็น thinking model → เผื่อ token ให้คิด + เขียน HTML เต็มใบ (กันการ์ดขาด)
+      generationConfig: { maxOutputTokens: 8000 },
     }),
   });
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
@@ -129,15 +130,20 @@ async function critic(brief: string, html: string): Promise<{ score: number; fee
   const res = await client.messages.create({
     model: CRITIC_MODEL,
     max_tokens: 800,
-    system: "You are a senior design critic judging UI components in a head-to-head battle. You see a RENDERED screenshot plus the brief. Score visual quality AND brief-fit honestly.",
+    system:
+      "You are a ruthless, world-class UI design critic judging components head-to-head. " +
+      "Be decisive and USE THE FULL 0–10 RANGE — do NOT cluster every score around 7–8. " +
+      "Score anchors: 10 = exceptional/award-worthy · 9 = excellent · 7–8 = solid · 5–6 = generic or mediocre · 3–4 = weak/unbalanced · 0–2 = broken/incomplete. " +
+      "Judge on: visual hierarchy, typography, spacing & balance, color & contrast, brief-fit, and overall polish. " +
+      "Penalize generic, templated, or unfinished-looking designs. Reward genuinely better work and fail weak work — differentiate clearly.",
     messages: [{
       role: "user",
       content: [
         { type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } },
-        { type: "text", text: `Brief: ${brief}\n\nScore 0–10. One short reason in Thai (max 1 sentence).` },
+        { type: "text", text: `Brief: ${brief}\n\nScore this RENDERED component 0–10 (one decimal allowed, e.g. 8.5). Be critical and use the full range — don't default to 7–8. Then one short, specific reason in Thai (max 1 sentence).` },
       ],
     }],
-    output_config: { format: { type: "json_schema", schema: { type: "object", properties: { score: { type: "integer" }, feedback: { type: "string" } }, required: ["score", "feedback"], additionalProperties: false } } },
+    output_config: { format: { type: "json_schema", schema: { type: "object", properties: { score: { type: "number" }, feedback: { type: "string" } }, required: ["score", "feedback"], additionalProperties: false } } },
   } as Anthropic.MessageCreateParamsNonStreaming);
   return JSON.parse(textOf(res));
 }
