@@ -4,11 +4,13 @@
 
 ### A multi-model AI studio that designs UI components — and judges its own work by looking at the pixels.
 
-Multiple AI models collaborate: a **Builder** designs a component, a **vision Critic** looks at the *rendered screenshot* and scores it, the Builder revises until it passes — and rival models **battle head-to-head** on a leaderboard.
+Models from **three vendors** (Anthropic · OpenAI · Google) collaborate: in the **Critic-loop relay**, a team of models — 🎨 Designer → 🏗️ Architect → ✨ Refiner → 💎 Finisher — each improve one component, judged by a **vision Critic** that scores the *rendered screenshot*; in **Model Battle**, they go head-to-head on a leaderboard. **Bring your own key** — it runs entirely on the keys you paste in your own browser.
 
-![Node](https://img.shields.io/badge/Node.js-22-339933?logo=node.js&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-render-2EAD33?logo=playwright&logoColor=white)
-![Claude](https://img.shields.io/badge/Claude-vision_critic-D97757?logo=anthropic&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude-Opus_+_Sonnet-D97757?logo=anthropic&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5.5-412991?logo=openai&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-3.1_Pro-4285F4?logo=googlegemini&logoColor=white)
 ![Tailwind](https://img.shields.io/badge/Tailwind-CDN-38BDF8?logo=tailwindcss&logoColor=white)
 
 </div>
@@ -60,32 +62,37 @@ node battle.mjs "a testimonial card"
 
 ## 🖥️ Web UI (`web/`)
 
-A **Next.js** app that turns the studio into a live demo. Two tabs, both stream over Server-Sent Events:
+A **Next.js 16** app that turns the studio into a live demo. Two tabs, both stream live over SSE:
 
-- **🎬 Critic loop** — type a brief and watch the **build → render → vision-critic → revise** loop stream in round by round, each round showing the real AI-generated component in an iframe with its score and feedback.
-- **⚔️ Model battle** — **cross-vendor**: **Claude Opus 4.8**, **Claude Haiku 4.5** and **Google Gemini 3.1 Pro** design the *same* brief side-by-side; the vision-critic scores each, crowns a 👑 winner, and a live **leaderboard** tracks win-rate + average score across battles in the session.
+- **🔄 Critic loop — a multi-model relay.** A **team of models from different vendors** improves one component round by round, each with a real job:
+  **🎨 Gemini 3.1 Pro** (Designer) → **🏗️ Claude Opus 4.8** (Architect) → **✨ Claude Sonnet 4.6** (Refiner) → **💎 OpenAI GPT-5.5** (Finisher). Each round revises the **best result so far** (so scores climb, not regress); a **consistent Claude-Opus vision critic** scores every round; 👑 marks the top one.
+- **⚔️ Model battle — 4-way cross-vendor.** **Opus 4.8 · Sonnet 4.6 · GPT-5.5 · Gemini 3.1 Pro** design the *same* brief side-by-side; the vision-critic scores each (seeing the **full-page** screenshot), crowns a 👑 winner, and a persisted **leaderboard** tracks win-rate + average score.
 
-🌏 **Bilingual** — write the brief in **Thai or English**; the AI generates the component's visible copy in that same language.
+Every generated component can be **previewed full-screen**, **copied / downloaded** as standalone HTML, or **shared** via a public `/p/<id>` link.
+
+🔑 **BYOK (bring your own key)** — paste your Anthropic / OpenAI / Google keys in the app; they're stored **only in your browser** (localStorage) and sent **per-request in the POST body — never to a database, never logged**. So a public deploy costs the owner nothing: every visitor runs on their own keys.
+
+🌏 **Bilingual** — write the brief in **Thai or English**; the AI writes the component's copy in that same language.
 
 ```bash
 cd web
 npm install
-npm run dev        # http://localhost:3000
+npm run dev        # http://localhost:3000  → paste your keys in the 🔑 panel
 ```
 
-**Keys are optional** (stub fallback runs the whole pipeline keyless):
+**Local dev can also use env keys** (stub fallback runs the whole pipeline keyless):
 
 ```powershell
-$env:ANTHROPIC_API_KEY = "sk-ant-..."   # Claude builder + vision critic
-$env:GEMINI_API_KEY     = "AIza..."     # Gemini contestant in the battle
-$env:GEMINI_MODEL       = "gemini-3.1-pro-preview"   # optional override (this is the default)
+$env:ANTHROPIC_API_KEY = "sk-ant-..."   # Claude builder(s) + vision critic
+$env:OPENAI_API_KEY     = "sk-proj-..."  # GPT-5.5
+$env:GEMINI_API_KEY     = "AIza..."      # Gemini 3.1 Pro
 ```
 
-> Gemini is called via the REST API directly (no extra SDK). The critic is Claude vision — an honest caveat in a Claude-vs-Gemini battle, noted for transparency.
+> Resolution order per request: **your pasted key → server env → keyless stub**. Gemini & OpenAI are called via REST directly (no extra SDKs). The critic is Claude vision — an honest caveat in a cross-vendor battle, noted for transparency.
 
 ## 🛠️ Tech
 
-**Node.js (ESM)** · **Next.js** (web UI, SSE) · **Playwright** (render to screenshot) · **Anthropic Claude** — builder + **vision** critic, structured JSON outputs · **Google Gemini** (REST) · **Tailwind** (CDN). Pluggable cross-vendor model panel.
+**Next.js 16** (web UI, SSE over `fetch` + `ReadableStream`) · **Playwright** (render to full-page screenshot) · **Anthropic Claude** — builder(s) + **vision** critic, structured JSON outputs · **OpenAI GPT-5.5** (REST) · **Google Gemini 3.1 Pro** (REST) · **Tailwind** (CDN) · **BYOK** per-request key threading. Pluggable cross-vendor model roster.
 
 ---
 

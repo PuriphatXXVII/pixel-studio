@@ -1,35 +1,55 @@
 "use client";
 import { useState, useEffect } from "react";
-import { RefreshCcw, Swords, Bot, Eye, Languages, Wand2, Loader2, Crown, Trophy, Medal, TriangleAlert, Check, RotateCw, Maximize2, X } from "lucide-react";
+import { RefreshCcw, Swords, Bot, Eye, Languages, Wand2, Loader2, Crown, Trophy, Medal, TriangleAlert, Check, RotateCw, Maximize2, X, Copy, Download, Share2, KeyRound } from "lucide-react";
+import { frame } from "@/lib/frame";
 
-type Round = { n: number; html: string; by: string; score: number; pass: boolean; feedback: string };
-type CResult = { name: string; vendor: string; accent: string; html: string; score: number; feedback: string };
+type Round = { n: number; html: string; by: string; vendor: string; role: string; score: number; pass: boolean; feedback: string };
+type CResult = { name: string; vendor: string; accent: string; html: string; score: number; feedback: string; unavailable?: boolean; reason?: string };
 type LeaderRow = { name: string; vendor: string; wins: number; runs: number; winRate: number; avg: number };
 
 const VENDOR: Record<string, { label: string; cls: string }> = {
   anthropic: { label: "Anthropic", cls: "bg-orange-500/20 text-orange-300" },
   google: { label: "Google", cls: "bg-sky-500/20 text-sky-300" },
+  openai: { label: "OpenAI", cls: "bg-teal-500/20 text-teal-300" },
 };
 const EXPECTED_CONTESTANTS = 4; // ใช้โชว์ skeleton ระหว่างรอผล (ดู lib/battle.ts)
 
 // โชว์ชื่อรุ่นให้สวย: "claude-opus-4-8" → "claude-opus-4.8" (model id จริงยังเป็น -8 ตอนเรียก API)
 const pretty = (id: string) => id.replace(/-(\d+)-(\d+)$/, "-$1.$2");
 
+// ── BYOK: per-user API keys stored in localStorage ────────────────────────────
+type Keys = { anthropic?: string; gemini?: string; openai?: string };
+const BYOK_KEY = "pixel-byok";
+function loadKeys(): Keys {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(BYOK_KEY) ?? "{}") as Keys; } catch { return {}; }
+}
+function saveKeys(k: Keys) { localStorage.setItem(BYOK_KEY, JSON.stringify(k)); }
+
+// ── SSE over POST: keys travel in the body, never in the URL ─────────────────
+async function streamSSE(path: string, body: unknown, onEvent: (msg: unknown) => void): Promise<void> {
+  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const reader = res.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line) continue;
+      const data = line.startsWith("data: ") ? line.slice(6) : line;
+      try { onEvent(JSON.parse(data)); } catch { /* skip malformed frames */ }
+    }
+  }
+}
+
 type PreviewItem = { html: string; title: string; score?: number };
 type OnPreview = (p: PreviewItem) => void;
 
-// ฉีด guard เข้า srcDoc: กันลิงก์/ฟอร์มในงาน AI พา iframe เด้งไปหน้าแอป (relative URL resolve กับ localhost:3000)
-function frame(html: string): string {
-  const guard =
-    '<base target="_blank">' +
-    // ซ่อน scrollbar ให้ thumbnail/preview สะอาดเท่ากันทุกการ์ด (ยัง scroll ด้วยล้อเมาส์ได้)
-    "<style>::-webkit-scrollbar{width:0;height:0;display:none}html{scrollbar-width:none;-ms-overflow-style:none}</style>" +
-    "<script>" +
-    "document.addEventListener('click',function(e){var t=e.target;var a=t&&t.closest?t.closest('a'):null;if(a)e.preventDefault();},true);" +
-    "document.addEventListener('submit',function(e){e.preventDefault();},true);" +
-    "</script>";
-  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + guard) : guard + html;
-}
 
 function StubBanner() {
   return (
@@ -60,6 +80,68 @@ function SkeletonCard({ label, h = "h-64" }: { label: string; h?: string }) {
   );
 }
 
+function ExportButtons({ html, filename = "component.html" }: { html: string; filename?: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(html).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  function download() {
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  const btn = "text-[11px] inline-flex items-center gap-1 text-neutral-400 hover:text-white transition";
+  return (
+    <>
+      <button onClick={copy} className={btn} title="คัดลอก HTML">
+        {copied
+          ? <><Check className="w-3.5 h-3.5 text-emerald-400" /><span className="text-emerald-400">คัดลอกแล้ว</span></>
+          : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+      </button>
+      <button onClick={download} className={btn} title="ดาวน์โหลด HTML">
+        <Download className="w-3.5 h-3.5" /> Download
+      </button>
+    </>
+  );
+}
+
+function ShareButton({ html, title, score }: { html: string; title: string; score?: number }) {
+  const [state, setState] = useState<"idle" | "saving" | "done">("idle");
+  async function share() {
+    if (state !== "idle") return;
+    setState("saving");
+    try {
+      const res = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html, title, score }),
+      });
+      const { id } = (await res.json()) as { id: string };
+      await navigator.clipboard.writeText(`${location.origin}/p/${id}`);
+      setState("done");
+      setTimeout(() => setState("idle"), 1500);
+    } catch {
+      setState("idle");
+    }
+  }
+  const btn = "text-[11px] inline-flex items-center gap-1 text-neutral-400 hover:text-white transition disabled:opacity-50";
+  return (
+    <button onClick={share} disabled={state === "saving"} className={btn} title="แชร์ลิงก์">
+      {state === "saving"
+        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        : state === "done"
+          ? <><Check className="w-3.5 h-3.5 text-emerald-400" /><span className="text-emerald-400">คัดลอกลิงก์แล้ว</span></>
+          : <><Share2 className="w-3.5 h-3.5" /> Share</>}
+    </button>
+  );
+}
+
 const TABS = [
   { key: "studio", label: "Critic loop", Icon: RefreshCcw },
   { key: "battle", label: "Model battle", Icon: Swords },
@@ -80,12 +162,53 @@ function PreviewModal({ preview, onClose }: { preview: PreviewItem | null; onClo
       <div className="max-w-6xl w-full mx-auto flex flex-col bg-neutral-900 rounded-2xl ring-1 ring-white/15 overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
           <span className="font-bold text-sm inline-flex items-center gap-2">
-            <Maximize2 className="w-4 h-4 text-rose-400" /> {preview.title}
+            {preview.title}
             {preview.score != null && <span className="text-emerald-300 font-black">· {preview.score}/10</span>}
           </span>
-          <button onClick={onClose} aria-label="ปิด" className="text-neutral-400 hover:text-white transition"><X className="w-5 h-5" /></button>
+          <div className="flex items-center gap-3">
+            <ExportButtons html={preview.html} />
+            <ShareButton html={preview.html} title={preview.title} score={preview.score} />
+            <button onClick={onClose} aria-label="ปิด" className="text-neutral-400 hover:text-white transition"><X className="w-5 h-5" /></button>
+          </div>
         </div>
         <iframe srcDoc={frame(preview.html)} title={preview.title} className="w-full h-[78vh] bg-white border-0" sandbox="allow-scripts" />
+      </div>
+    </div>
+  );
+}
+
+function KeysModal({ onClose }: { onClose: () => void }) {
+  const [draft, setDraft] = useState<Keys>(loadKeys);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const inp = (label: string, placeholder: string, k: keyof Keys) => (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-neutral-400">{label}</span>
+      <input type="password" value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+        placeholder={placeholder} autoComplete="off"
+        className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-rose-500" />
+    </label>
+  );
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-neutral-900 rounded-2xl ring-1 ring-white/15 shadow-2xl w-full max-w-md p-6 flex flex-col gap-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold text-base flex items-center gap-2"><KeyRound className="w-4 h-4 text-rose-400" /> BYOK — คีย์ของคุณ</h2>
+          <button onClick={onClose} className="text-neutral-400 hover:text-white transition"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex flex-col gap-4">
+          {inp("Anthropic (Claude)", "sk-ant-…", "anthropic")}
+          {inp("Google Gemini", "AIza…", "gemini")}
+          {inp("OpenAI", "sk-…", "openai")}
+        </div>
+        <p className="text-[11px] text-neutral-500 leading-relaxed">คีย์เก็บในเบราว์เซอร์ของคุณเท่านั้น — ไม่ถูกส่งเข้าฐานข้อมูล/บันทึก</p>
+        <button onClick={() => { saveKeys(draft); onClose(); }}
+          className="bg-rose-500 hover:bg-rose-400 transition rounded-xl py-2.5 font-bold text-sm">
+          บันทึกคีย์
+        </button>
       </div>
     </div>
   );
@@ -94,6 +217,9 @@ function PreviewModal({ preview, onClose }: { preview: PreviewItem | null; onClo
 export default function Home() {
   const [tab, setTab] = useState<"studio" | "battle">("studio");
   const [preview, setPreview] = useState<PreviewItem | null>(null);
+  const [keysOpen, setKeysOpen] = useState(false);
+  const [hasAnyKey, setHasAnyKey] = useState(() => Object.values(loadKeys()).some(Boolean));
+  function handleKeysClose() { setKeysOpen(false); setHasAnyKey(Object.values(loadKeys()).some(Boolean)); }
   return (
     <main className="min-h-screen bg-neutral-950 text-white font-sans">
       <div className="max-w-[1600px] mx-auto px-6 lg:px-10 py-12">
@@ -109,17 +235,23 @@ export default function Home() {
           ))}
         </div>
 
-        {/* tabs */}
-        <div className="mt-7 inline-flex bg-neutral-900 ring-1 ring-white/10 rounded-xl p-1">
-          {TABS.map(({ key, label, Icon }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-5 py-2 rounded-lg text-sm font-bold transition inline-flex items-center gap-2 ${tab === key ? "bg-rose-500 text-white" : "text-neutral-400 hover:text-white"}`}
-            >
-              <Icon className="w-4 h-4" /> {label}
-            </button>
-          ))}
+        {/* tabs + BYOK key button */}
+        <div className="mt-7 flex flex-wrap items-center gap-3">
+          <div className="inline-flex bg-neutral-900 ring-1 ring-white/10 rounded-xl p-1">
+            {TABS.map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`px-5 py-2 rounded-lg text-sm font-bold transition inline-flex items-center gap-2 ${tab === key ? "bg-rose-500 text-white" : "text-neutral-400 hover:text-white"}`}
+              >
+                <Icon className="w-4 h-4" /> {label}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setKeysOpen(true)}
+            className={`inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-xl font-bold transition ring-1 ${hasAnyKey ? "bg-emerald-500/10 ring-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20" : "bg-amber-500/10 ring-amber-500/30 text-amber-300 hover:bg-amber-500/20"}`}>
+            <KeyRound className="w-3.5 h-3.5" /> {hasAnyKey ? "🔑 คีย์ของคุณ" : "⚠️ ใส่ API key"}
+          </button>
         </div>
 
         {tab === "studio" ? <Studio onPreview={setPreview} /> : <Battle onPreview={setPreview} />}
@@ -127,6 +259,7 @@ export default function Home() {
         <p className="text-neutral-600 text-xs mt-12">Pixel Studio · multi-model AI design studio</p>
       </div>
       <PreviewModal preview={preview} onClose={() => setPreview(null)} />
+      {keysOpen && <KeysModal onClose={handleKeysClose} />}
     </main>
   );
 }
@@ -135,24 +268,27 @@ function Studio({ onPreview }: { onPreview: OnPreview }) {
   const [brief, setBrief] = useState("");
   const [rounds, setRounds] = useState<Round[]>([]);
   const [running, setRunning] = useState(false);
+  const bestN = rounds.length ? rounds.reduce((a, b) => (b.score >= a.score ? b : a)).n : -1;
 
-  function run() {
+  async function run() {
     if (running) return;
     setRounds([]);
     setRunning(true);
-    const es = new EventSource(`/api/design?brief=${encodeURIComponent(brief)}`);
-    es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "round") setRounds((r) => [...r, msg as Round]);
-      else if (msg.type === "done") { es.close(); setRunning(false); }
-      else if (msg.type === "error") { es.close(); setRunning(false); console.error(msg.message); }
-    };
-    es.onerror = () => { es.close(); setRunning(false); };
+    try {
+      await streamSSE("/api/design", { brief, keys: loadKeys() }, (msg) => {
+        const m = msg as { type: string } & Record<string, unknown>;
+        if (m.type === "round") setRounds((r) => [...r, m as unknown as Round]);
+        else if (m.type === "done") setRunning(false);
+        else if (m.type === "error") { setRunning(false); console.error(m.message); }
+      });
+    } finally {
+      setRunning(false);
+    }
   }
 
   return (
     <>
-      <p className="text-neutral-500 text-sm mt-6">Builder ออกแบบ → render → <b className="text-neutral-300">vision critic</b> ให้คะแนน → แก้จนผ่าน (≥8/10)</p>
+      <p className="text-neutral-500 text-sm mt-6">หลายโมเดลข้ามค่ายผลัดกันปรับปรุงงานเดียวกันทีละรอบ → <b className="text-neutral-300">vision critic (Opus)</b> ให้คะแนน → จนผ่าน ≥8/10</p>
       <div className="mt-3 flex flex-col sm:flex-row gap-3">
         <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={2}
           className="flex-1 bg-neutral-900 border border-neutral-700 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-rose-500"
@@ -166,11 +302,13 @@ function Studio({ onPreview }: { onPreview: OnPreview }) {
       {rounds.some((r) => r.by === "stub") && <StubBanner />}
 
       <div className="mt-10 grid gap-6 md:grid-cols-2">
-        {rounds.map((r) => (
+        {rounds.map((r) => {
+          const isBest = r.n === bestN;
+          return (
           <div key={r.n} style={{ animationDelay: `${r.n * 80}ms` }}
-            className="animate-in-up bg-neutral-900 rounded-2xl ring-1 ring-white/10 overflow-hidden transition hover:ring-white/25 hover:-translate-y-0.5">
+            className={`animate-in-up bg-neutral-900 rounded-2xl overflow-hidden transition hover:-translate-y-0.5 ${isBest ? "ring-2 ring-amber-400 animate-glow" : "ring-1 ring-white/10 hover:ring-white/25"}`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-              <span className="font-bold text-sm">Round {r.n} <span className="text-neutral-500 font-normal">· {pretty(r.by)}</span></span>
+              <span className="font-bold text-sm inline-flex items-center gap-1.5">{isBest && <Crown className="w-4 h-4 text-amber-400 shrink-0" />}Round {r.n} <span className="text-neutral-500 font-normal">· {pretty(r.by)}</span>{r.vendor && VENDOR[r.vendor] && <span className={`text-[10px] px-2 py-0.5 rounded-full ${VENDOR[r.vendor].cls}`}>{VENDOR[r.vendor].label}</span>}{r.role && <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-neutral-300">{r.role}</span>}</span>
               <span className={`text-xs font-bold px-3 py-1 rounded-full inline-flex items-center gap-1 ${r.pass ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>
                 {r.score}/10 {r.pass ? <><Check className="w-3.5 h-3.5" /> ผ่าน</> : <><RotateCw className="w-3.5 h-3.5" /> แก้</>}
               </span>
@@ -178,13 +316,18 @@ function Studio({ onPreview }: { onPreview: OnPreview }) {
             <iframe srcDoc={frame(r.html)} title={`round-${r.n}`} className="w-full h-72 bg-white border-0" sandbox="allow-scripts" />
             <div className="px-4 py-3 flex items-start justify-between gap-3">
               <p className="text-xs text-neutral-400 leading-relaxed">↳ {r.feedback}</p>
-              <button onClick={() => onPreview({ html: r.html, title: `Round ${r.n} · ${pretty(r.by)}`, score: r.score })}
-                className="shrink-0 text-[11px] inline-flex items-center gap-1 text-neutral-400 hover:text-white transition" title="ดูเต็มจอ">
-                <Maximize2 className="w-3.5 h-3.5" /> ดูเต็ม
-              </button>
+              <div className="shrink-0 flex items-center gap-2">
+                <button onClick={() => onPreview({ html: r.html, title: `Round ${r.n} · ${pretty(r.by)}`, score: r.score })}
+                  className="text-[11px] inline-flex items-center gap-1 text-neutral-400 hover:text-white transition" title="ดูเต็มจอ">
+                  <Maximize2 className="w-3.5 h-3.5" /> ดูเต็ม
+                </button>
+                <ExportButtons html={r.html} filename={`round-${r.n}.html`} />
+                <ShareButton html={r.html} title={`Round ${r.n} · ${pretty(r.by)}`} score={r.score} />
+              </div>
             </div>
           </div>
-        ))}
+          );
+        })}
         {running && <SkeletonCard label="AI กำลังออกแบบ/แก้รอบถัดไป…" h="h-72" />}
       </div>
     </>
@@ -198,22 +341,28 @@ function Battle({ onPreview }: { onPreview: OnPreview }) {
   const [board, setBoard] = useState<LeaderRow[]>([]);
   const [running, setRunning] = useState(false);
 
-  function run() {
+  async function run() {
     if (running) return;
     setResults([]); setWinner(null); setBoard([]);
     setRunning(true);
-    const es = new EventSource(`/api/battle?brief=${encodeURIComponent(brief)}`);
-    es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "contestant") setResults((r) => [...r, msg.result as CResult]);
-      else if (msg.type === "winner") { setWinner(msg.name); setBoard(msg.leaderboard as LeaderRow[]); }
-      else if (msg.type === "done") { es.close(); setRunning(false); }
-      else if (msg.type === "error") { es.close(); setRunning(false); console.error(msg.message); }
-    };
-    es.onerror = () => { es.close(); setRunning(false); };
+    try {
+      await streamSSE("/api/battle", { brief, keys: loadKeys() }, (msg) => {
+        const m = msg as { type: string } & Record<string, unknown>;
+        if (m.type === "contestant") setResults((r) => [...r, m.result as CResult]);
+        else if (m.type === "winner") { setWinner(m.name as string); setBoard(m.leaderboard as LeaderRow[]); }
+        else if (m.type === "done") setRunning(false);
+        else if (m.type === "error") { setRunning(false); console.error(m.message); }
+      });
+    } finally {
+      setRunning(false);
+    }
   }
 
-  const ranked = [...results].sort((a, b) => b.score - a.score);
+  const ranked = [...results].sort((a, b) => {
+    if (a.unavailable && !b.unavailable) return 1;
+    if (!a.unavailable && b.unavailable) return -1;
+    return b.score - a.score;
+  });
   const pending = running ? Math.max(0, EXPECTED_CONTESTANTS - results.length) : 0;
 
   return (
@@ -234,24 +383,56 @@ function Battle({ onPreview }: { onPreview: OnPreview }) {
       <div className="mt-10 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         {ranked.map((c, i) => {
           const v = VENDOR[c.vendor] ?? { label: c.vendor, cls: "bg-neutral-700 text-neutral-200" };
-          const isWin = winner === c.name;
+          const isUnavailable = !!c.unavailable;
+          const isWin = !isUnavailable && winner === c.name;
           return (
             <div key={c.name} style={{ animationDelay: `${i * 80}ms` }}
-              className={`animate-in-up bg-neutral-900 rounded-2xl overflow-hidden ring-1 transition hover:-translate-y-0.5 ${isWin ? "ring-2 ring-amber-400 animate-glow" : "ring-white/10 hover:ring-white/25"}`}>
+              className={`animate-in-up rounded-2xl overflow-hidden ring-1 transition ${
+                isUnavailable
+                  ? "bg-neutral-900/60 ring-white/5 opacity-60"
+                  : isWin
+                    ? "bg-neutral-900 ring-2 ring-amber-400 animate-glow hover:-translate-y-0.5"
+                    : "bg-neutral-900 ring-white/10 hover:ring-white/25 hover:-translate-y-0.5"
+              }`}>
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-                <span className="font-bold text-sm truncate inline-flex items-center gap-1">{isWin && <Crown className="w-4 h-4 text-amber-400 shrink-0" />}{pretty(c.name)}</span>
-                <span className="text-base font-black text-emerald-300">{c.score}<span className="text-xs text-neutral-500 font-normal">/10</span></span>
+                <span className="font-bold text-sm truncate inline-flex items-center gap-1">
+                  {isWin && <Crown className="w-4 h-4 text-amber-400 shrink-0" />}
+                  {pretty(c.name)}
+                </span>
+                {isUnavailable
+                  ? <span className="text-base font-black text-neutral-600">—</span>
+                  : <span className="text-base font-black text-emerald-300">{c.score}<span className="text-xs text-neutral-500 font-normal">/10</span></span>
+                }
               </div>
-              <iframe srcDoc={frame(c.html)} title={c.name} className="w-full h-80 bg-white border-0" sandbox="allow-scripts" />
+              {isUnavailable
+                ? (
+                  <div className="w-full h-80 bg-neutral-800/40 grid place-items-center">
+                    <div className="flex flex-col items-center gap-2 text-neutral-600 px-6 text-center">
+                      <TriangleAlert className="w-7 h-7" />
+                      <span className="text-xs leading-relaxed">{c.reason ?? "Model unavailable"}</span>
+                    </div>
+                  </div>
+                )
+                : <iframe srcDoc={frame(c.html)} title={c.name} className="w-full h-80 bg-white border-0" sandbox="allow-scripts" />
+              }
               <div className="px-4 py-3">
                 <div className="flex items-center justify-between">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${v.cls}`}>{v.label}</span>
-                  <button onClick={() => onPreview({ html: c.html, title: pretty(c.name), score: c.score })}
-                    className="text-[11px] inline-flex items-center gap-1 text-neutral-400 hover:text-white transition" title="ดูเต็มจอ">
-                    <Maximize2 className="w-3.5 h-3.5" /> ดูเต็ม
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${v.cls}`}>{v.label}</span>
+                    {isUnavailable && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-700 text-neutral-400">unavailable</span>}
+                  </div>
+                  {!isUnavailable && (
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => onPreview({ html: c.html, title: pretty(c.name), score: c.score })}
+                        className="text-[11px] inline-flex items-center gap-1 text-neutral-400 hover:text-white transition" title="ดูเต็มจอ">
+                        <Maximize2 className="w-3.5 h-3.5" /> ดูเต็ม
+                      </button>
+                      <ExportButtons html={c.html} filename={`${c.name}.html`} />
+                      <ShareButton html={c.html} title={pretty(c.name)} score={c.score} />
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-neutral-400 leading-relaxed mt-2">↳ {c.feedback}</p>
+                {!isUnavailable && <p className="text-xs text-neutral-400 leading-relaxed mt-2">↳ {c.feedback}</p>}
               </div>
             </div>
           );

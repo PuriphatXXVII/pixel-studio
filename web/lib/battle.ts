@@ -1,46 +1,32 @@
 // Pixel Studio (web) — Model Battle: หลายโมเดล "ข้ามค่าย" แข่งออกแบบ brief เดียวกัน
 // แต่ละตัว build → render → 🧐 vision-critic (Claude) ให้คะแนน → 👑 ตัดสิน + leaderboard สะสม
-// contestants = pluggable + cross-vendor: Claude (Opus/Haiku) + Gemini (Google)
+// contestants = pluggable + cross-vendor: Claude (Opus/Sonnet) + GPT-5.5 (OpenAI) + Gemini (Google)
 // ไม่มี key → stub (variant ต่างกัน + คะแนน deterministic) เพื่อให้รัน pipeline ได้ keyless
 import Anthropic from "@anthropic-ai/sdk";
-import { chromium } from "playwright";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import {
+  clean, textOf,
+  keyFor, hasKey, type Keys,
+  SYSTEM, BUILDERS, buildWith, renderPng,
+  type Builder,
+} from "./models";
 
-const hasAnthropic = () => !!process.env.ANTHROPIC_API_KEY;
-const hasGemini = () => !!process.env.GEMINI_API_KEY;
+// clean and SYSTEM are re-exported from models; imported here for completeness.
+void clean; void SYSTEM;
+
 const CRITIC_MODEL = "claude-opus-4-8";
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
-
-const SYSTEM =
-  'You are a senior frontend designer. Output ONE self-contained HTML document for the requested UI component. ' +
-  'Load Tailwind via <script src="https://cdn.tailwindcss.com"></script>. Center it on a neutral page with padding. ' +
-  "Polished and modern. Write any visible copy in the SAME LANGUAGE as the brief (Thai brief → Thai text in the component). " +
-  "Raw HTML only, starting with <!doctype html>.";
-
-export type Contestant = { name: string; model: string; vendor: "anthropic" | "google"; accent: string };
-export type BattleResult = { name: string; vendor: string; accent: string; html: string; score: number; feedback: string };
+export type Contestant = Builder;
+export type BattleResult = { name: string; vendor: string; accent: string; html: string; score: number; feedback: string; unavailable?: boolean; reason?: string };
+type BuildResult = { html: string; unavailable?: boolean; reason?: string };
 export type LeaderRow = { name: string; vendor: string; wins: number; runs: number; winRate: number; avg: number };
 export type BattleEvent =
   | { type: "contestant"; result: BattleResult }
   | { type: "winner"; name: string; vendor: string; score: number; leaderboard: LeaderRow[] };
 
 // 🥊 ผู้เข้าแข่ง — เพิ่ม/สลับโมเดลได้ตรงนี้ (cross-vendor). name = ชื่อโชว์, model = API id
-const CONTESTANTS: Contestant[] = [
-  { name: "claude-opus-4-8", model: "claude-opus-4-8", vendor: "anthropic", accent: "rose" },
-  { name: "claude-sonnet-4-6", model: "claude-sonnet-4-6", vendor: "anthropic", accent: "amber" },
-  { name: "claude-haiku-4-5", model: "claude-haiku-4-5", vendor: "anthropic", accent: "indigo" },
-  { name: "gemini-3.1-pro", model: GEMINI_MODEL, vendor: "google", accent: "emerald" },
-];
-
-const clean = (s: string) =>
-  s.trim().replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/, "").trim();
-
-function textOf(res: Anthropic.Message): string {
-  const block = res.content.find((b) => b.type === "text");
-  return block && "text" in block ? block.text : "";
-}
+const CONTESTANTS: Contestant[] = BUILDERS;
 
 // stub component — ความ "รวย" ต่างกันตามโมเดล เพื่อให้ critic (อิงขนาด) ตัดสินได้
 function stub(accent: string, label: string, features: string[], badge?: string): string {
@@ -64,69 +50,32 @@ function stubFor(c: Contestant): string {
     return stub(c.accent, c.name, ["Unlimited projects", "Priority support", "Analytics dashboard", "API access"]);
   if (c.name.includes("sonnet"))
     return stub(c.accent, c.name, ["Unlimited projects", "Priority support", "Analytics dashboard", "Team seats"]);
+  if (c.name.includes("gpt"))
+    return stub(c.accent, c.name, ["Unlimited projects", "Priority support", "Analytics dashboard", "API access", "Team seats"]);
   return stub(c.accent, c.name, ["Projects", "Email support", "Basic analytics"]);
 }
 
-async function buildClaude(model: string, brief: string): Promise<string> {
-  const client = new Anthropic();
-  const res = await client.messages.create({
-    model,
-    max_tokens: 4000,
-    system: SYSTEM,
-    messages: [{ role: "user", content: `Build this UI component:\n${brief}` }],
-  });
-  return clean(textOf(res));
-}
-
-async function buildGemini(model: string, brief: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM }] },
-      contents: [{ role: "user", parts: [{ text: `Build this UI component:\n${brief}` }] }],
-      // 3.1 Pro เป็น thinking model → เผื่อ token ให้คิด + เขียน HTML เต็มใบ (กันการ์ดขาด)
-      generationConfig: { maxOutputTokens: 8000 },
-    }),
-  });
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  const text = (data?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("");
-  return clean(text);
-}
-
-async function buildFor(c: Contestant, brief: string): Promise<string> {
+async function buildFor(c: Contestant, brief: string, keys?: Keys): Promise<BuildResult> {
+  const has = hasKey(c.vendor, keys);
+  if (!has) return { html: stubFor(c) };
   try {
-    if (c.vendor === "anthropic" && hasAnthropic()) return await buildClaude(c.model, brief);
-    if (c.vendor === "google" && hasGemini()) return await buildGemini(c.model, brief);
+    return { html: await buildWith(c, brief, undefined, undefined, keys) };
   } catch (e) {
-    console.error(`[battle] ${c.name} build failed → stub:`, e instanceof Error ? e.message : e);
-  }
-  return stubFor(c);
-}
-
-async function renderPng(html: string): Promise<Buffer> {
-  const browser = await chromium.launch();
-  try {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 720 } });
-    await page.setContent(html, { waitUntil: "networkidle" });
-    await page.waitForTimeout(400);
-    return await page.screenshot();
-  } finally {
-    await browser.close();
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error(`[battle] ${c.name} build failed:`, reason);
+    return { html: "", unavailable: true, reason };
   }
 }
 
-async function critic(brief: string, html: string): Promise<{ score: number; feedback: string }> {
+async function critic(brief: string, html: string, keys?: Keys): Promise<{ score: number; feedback: string }> {
   // stub: ให้คะแนนอิงความครบของ component (จำนวน feature) — deterministic, แยกอันดับชัด
-  if (!hasAnthropic()) {
+  if (!hasKey("anthropic", keys)) {
     const feats = (html.match(/<li>/g) || []).length;
     const score = Math.max(5, Math.min(9, 4 + feats));
     return { score, feedback: "[stub] ตัดสินจากความครบของ component (ตั้ง ANTHROPIC_API_KEY เพื่อใช้ vision critic จริง)" };
   }
   const png = await renderPng(html);
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey: keyFor("anthropic", keys) });
   const res = await client.messages.create({
     model: CRITIC_MODEL,
     max_tokens: 800,
@@ -181,18 +130,44 @@ function leaderboard(): LeaderRow[] {
     .sort((a, b) => b.wins - a.wins || b.avg - a.avg);
 }
 
-// async generator: yield ทีละผู้เข้าแข่ง แล้วปิดท้ายด้วยผู้ชนะ + leaderboard
-export async function* runBattle(brief: string): AsyncGenerator<BattleEvent> {
+// async generator: kick off all contestants concurrently, yield each result in completion order
+export async function* runBattle(brief: string, keys?: Keys): AsyncGenerator<BattleEvent> {
   const results: BattleResult[] = [];
-  for (const c of CONTESTANTS) {
-    const html = await buildFor(c, brief);
-    const { score, feedback } = await critic(brief, html);
-    const result: BattleResult = { name: c.name, vendor: c.vendor, accent: c.accent, html, score, feedback };
+
+  const pending = new Map<number, Promise<{ i: number; result: BattleResult }>>(
+    CONTESTANTS.map((c, i) => [
+      i,
+      (async () => {
+        try {
+          const built = await buildFor(c, brief, keys);
+          if (built.unavailable) {
+            const result: BattleResult = { name: c.name, vendor: c.vendor, accent: c.accent, html: "", score: 0, feedback: built.reason ?? "", unavailable: true, reason: built.reason };
+            return { i, result };
+          }
+          const { score, feedback } = await critic(brief, built.html, keys);
+          const result: BattleResult = { name: c.name, vendor: c.vendor, accent: c.accent, html: built.html, score, feedback };
+          return { i, result };
+        } catch (e) {
+          const reason = e instanceof Error ? e.message : String(e);
+          return { i, result: { name: c.name, vendor: c.vendor, accent: c.accent, html: "", score: 0, feedback: reason, unavailable: true as const, reason } };
+        }
+      })(),
+    ])
+  );
+
+  while (pending.size) {
+    const { i, result } = await Promise.race(pending.values());
+    pending.delete(i);
     results.push(result);
     yield { type: "contestant", result };
   }
-  results.sort((a, b) => b.score - a.score);
-  const winner = results[0];
-  record(results, winner);
-  yield { type: "winner", name: winner.name, vendor: winner.vendor, score: winner.score, leaderboard: leaderboard() };
+
+  const ranked = results.filter((r) => !r.unavailable).sort((a, b) => b.score - a.score);
+  if (ranked.length > 0) {
+    const winner = ranked[0];
+    record(ranked, winner);
+    yield { type: "winner", name: winner.name, vendor: winner.vendor, score: winner.score, leaderboard: leaderboard() };
+  } else {
+    yield { type: "winner", name: "", vendor: "", score: 0, leaderboard: leaderboard() };
+  }
 }
