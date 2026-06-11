@@ -61,9 +61,12 @@ async function buildFor(c: Contestant, brief: string, keys?: Keys): Promise<Buil
   try {
     return { html: await buildWith(c, brief, undefined, undefined, keys) };
   } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    console.error(`[battle] ${c.name} build failed:`, reason);
-    return { html: "", unavailable: true, reason };
+    const raw = (e instanceof Error ? e.message : String(e)).split("\n")[0]
+      .replace(/sk-[A-Za-z0-9_-]+/g, "***")
+      .replace(/AIza[A-Za-z0-9_-]+/g, "***")
+      .slice(0, 120);
+    console.error(`[battle] ${c.name} build failed:`, raw);
+    return { html: "", unavailable: true, reason: raw };
   }
 }
 

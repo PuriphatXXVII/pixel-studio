@@ -29,6 +29,7 @@ function saveKeys(k: Keys) { localStorage.setItem(BYOK_KEY, JSON.stringify(k)); 
 // ── SSE over POST: keys travel in the body, never in the URL ─────────────────
 async function streamSSE(path: string, body: unknown, onEvent: (msg: unknown) => void): Promise<void> {
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) { const e = await res.json().catch(() => ({} as { message?: string })); onEvent({ type: "error", message: e.message ?? `HTTP ${res.status}` }); return; }
   const reader = res.body!.getReader();
   const dec = new TextDecoder();
   let buf = "";
@@ -268,18 +269,20 @@ function Studio({ onPreview }: { onPreview: OnPreview }) {
   const [brief, setBrief] = useState("");
   const [rounds, setRounds] = useState<Round[]>([]);
   const [running, setRunning] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const bestN = rounds.length ? rounds.reduce((a, b) => (b.score >= a.score ? b : a)).n : -1;
 
   async function run() {
     if (running) return;
     setRounds([]);
+    setErr(null);
     setRunning(true);
     try {
       await streamSSE("/api/design", { brief, keys: loadKeys() }, (msg) => {
         const m = msg as { type: string } & Record<string, unknown>;
         if (m.type === "round") setRounds((r) => [...r, m as unknown as Round]);
         else if (m.type === "done") setRunning(false);
-        else if (m.type === "error") { setRunning(false); console.error(m.message); }
+        else if (m.type === "error") { setRunning(false); setErr(String(m.message)); }
       });
     } finally {
       setRunning(false);
@@ -299,7 +302,8 @@ function Studio({ onPreview }: { onPreview: OnPreview }) {
         </button>
       </div>
 
-      {rounds.some((r) => r.by === "stub") && <StubBanner />}
+      {rounds.some((r) => r.feedback?.includes("[stub]")) && <StubBanner />}
+      {err && <div className="mt-4 rounded-xl bg-red-500/10 ring-1 ring-red-500/30 px-4 py-3 text-sm text-red-300">{err}</div>}
 
       <div className="mt-10 grid gap-6 md:grid-cols-2">
         {rounds.map((r) => {
@@ -340,10 +344,11 @@ function Battle({ onPreview }: { onPreview: OnPreview }) {
   const [winner, setWinner] = useState<string | null>(null);
   const [board, setBoard] = useState<LeaderRow[]>([]);
   const [running, setRunning] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function run() {
     if (running) return;
-    setResults([]); setWinner(null); setBoard([]);
+    setResults([]); setWinner(null); setBoard([]); setErr(null);
     setRunning(true);
     try {
       await streamSSE("/api/battle", { brief, keys: loadKeys() }, (msg) => {
@@ -351,7 +356,7 @@ function Battle({ onPreview }: { onPreview: OnPreview }) {
         if (m.type === "contestant") setResults((r) => [...r, m.result as CResult]);
         else if (m.type === "winner") { setWinner(m.name as string); setBoard(m.leaderboard as LeaderRow[]); }
         else if (m.type === "done") setRunning(false);
-        else if (m.type === "error") { setRunning(false); console.error(m.message); }
+        else if (m.type === "error") { setRunning(false); setErr(String(m.message)); }
       });
     } finally {
       setRunning(false);
@@ -379,6 +384,7 @@ function Battle({ onPreview }: { onPreview: OnPreview }) {
       </div>
 
       {results.some((r) => r.feedback?.includes("[stub]")) && <StubBanner />}
+      {err && <div className="mt-4 rounded-xl bg-red-500/10 ring-1 ring-red-500/30 px-4 py-3 text-sm text-red-300">{err}</div>}
 
       <div className="mt-10 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         {ranked.map((c, i) => {
